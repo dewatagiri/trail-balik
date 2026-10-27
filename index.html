@@ -9,6 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="vendor/maplibre-gl.css">
 <style>
 :root{
   --bg:#ffffff; --ink:#15231b; --muted:#5d6b63; --line:#dfe6e1; --soft:#f2f6f3;
@@ -43,6 +44,11 @@ h1{font-size:20px; font-weight:800; margin:0; letter-spacing:-.01em}
 #banner.info{display:block; background:#fff7e2; color:#8a5a00}
 .mapwrap{position:relative; flex:1; min-height:0; margin:8px 14px; border:1px solid var(--line); border-radius:14px; overflow:hidden; background:#fff}
 canvas{position:absolute; inset:0; width:100%; height:100%; display:block}
+#gl{position:absolute; inset:0; display:none}
+#gl.on{display:block}
+#north{position:absolute; top:8px; right:10px; z-index:2; display:none; flex-direction:column; align-items:center; font:800 13px Archivo,system-ui,sans-serif; color:#5d6b63; background:rgba(255,255,255,.85); border-radius:8px; padding:2px 6px; line-height:1.1; pointer-events:none}
+#north.on{display:flex}
+.maplibregl-ctrl-scale{font-family:Archivo,system-ui,sans-serif; font-weight:600}
 #empty{position:absolute; inset:0; display:flex; align-items:center; justify-content:center; text-align:center; padding:24px; color:var(--muted); font-size:15px; line-height:1.45; pointer-events:none}
 .back{display:flex; align-items:center; gap:12px; margin:0 14px 8px; padding:8px 12px; border:1px solid var(--line); border-radius:12px; background:var(--soft)}
 .back svg{width:44px; height:44px; flex:none; transition:transform .25s}
@@ -118,7 +124,9 @@ input[type=file]{display:none}
 <div id="banner"></div>
 
 <div class="mapwrap">
+  <div id="gl"></div>
   <canvas id="map"></canvas>
+  <div id="north">N<span>&#8593;</span></div>
   <div id="empty">Waiting for GPS.<br>If it takes long, move to an open spot away from thick tree cover.</div>
 </div>
 
@@ -182,6 +190,9 @@ input[type=file]{display:none}
   <div class="row"><button id="close">Close</button></div>
 </div>
 
+<script src="vendor/maplibre-gl.js"></script>
+<script src="vendor/pmtiles.js"></script>
+<script src="vendor/protomaps-basemaps.js"></script>
 <script>
 (function(){
 "use strict";
@@ -519,6 +530,8 @@ function render(){
   S.pts.forEach(function(p){all.push(p);});
   if(S.trail) S.trail.forEach(function(p){all.push(p);});
   if(!all.length) return;
+  if(glRender(all)){ cv.style.visibility="hidden"; return; }
+  cv.style.visibility="";
 
   var ref=S.cur||all[0], k=Math.cos(ref.lat*rad);
   var P=function(p){return {x:(p.lon-ref.lon)*k*111320, y:-(p.lat-ref.lat)*110540};};
@@ -567,6 +580,87 @@ function render(){
   ctx.strokeStyle="#15231b"; ctx.lineWidth=2; ctx.stroke();
   ctx.fillStyle="#15231b"; ctx.textAlign="left"; ctx.font="600 12px Archivo,system-ui,sans-serif";
   ctx.fillText(len>=1000?(len/1000)+" km":len+" m",12,h-27);
+}
+/* ---------- offline basemap (PMTiles, falls back to the plain canvas above) ---------- */
+var AREAS=[
+  {id:"selangor-kl",     bb:[100.75,2.55,101.95,3.95]},
+  {id:"negeri-sembilan", bb:[101.65,2.35,102.65,3.25]},
+  {id:"pahang-west",     bb:[101.30,2.90,102.90,4.45]}
+];
+var BASE=location.href.replace(/[?#].*$/,"").replace(/[^\/]*$/,"");
+var GL={map:null, area:null, dead:false, loaded:false, proto:false, me:null, arrow:null};
+function areaFor(p){
+  for(var i=0;i<AREAS.length;i++){ var b=AREAS[i].bb; if(p.lon>=b[0]&&p.lon<=b[2]&&p.lat>=b[1]&&p.lat<=b[3]) return AREAS[i]; }
+  return null;
+}
+function fcLine(pts){ return {type:"FeatureCollection", features:(pts&&pts.length>1)?[{type:"Feature",properties:{},geometry:{type:"LineString",coordinates:pts.map(function(p){return [p.lon,p.lat];})}}]:[]}; }
+function fcPt(p){ return {type:"FeatureCollection", features:p?[{type:"Feature",properties:{},geometry:{type:"Point",coordinates:[p.lon,p.lat]}}]:[]}; }
+function glData(){ return {trail:fcLine(S.trail), track:fcLine(S.pts), start:fcPt(S.start), me:fcPt(S.cur)}; }
+function glStyle(area){
+  var d=glData();
+  var base=protomapsBasemaps.layers("protomaps", protomapsBasemaps.namedFlavor("light"), {lang:"en"});
+  return {
+    version:8,
+    glyphs:BASE+"glyphs/{fontstack}/{range}.pbf",
+    sprite:BASE+"sprites/light",
+    sources:{
+      protomaps:{type:"vector", url:"pmtiles://"+BASE+"maps/"+area.id+".pmtiles", maxzoom:14, attribution:"&copy; OpenStreetMap contributors &middot; Protomaps"},
+      tbTrail:{type:"geojson", data:d.trail}, tbTrack:{type:"geojson", data:d.track},
+      tbStart:{type:"geojson", data:d.start}, tbMe:{type:"geojson", data:d.me}
+    },
+    layers:base.concat([
+      {id:"tb-trail", type:"line", source:"tbTrail", layout:{"line-cap":"round","line-join":"round"}, paint:{"line-color":"#1b6fd1","line-width":4,"line-dasharray":[0.5,2.2]}},
+      {id:"tb-track", type:"line", source:"tbTrack", layout:{"line-cap":"round","line-join":"round"}, paint:{"line-color":"#1d5c3a","line-width":4}},
+      {id:"tb-start", type:"circle", source:"tbStart", paint:{"circle-radius":11,"circle-color":"#fff","circle-stroke-width":3,"circle-stroke-color":"#1d5c3a"}},
+      {id:"tb-start-s", type:"symbol", source:"tbStart", layout:{"text-field":"S","text-font":["Noto Sans Medium"],"text-size":12,"text-allow-overlap":true,"text-ignore-placement":true}, paint:{"text-color":"#1d5c3a"}},
+      {id:"tb-acc", type:"circle", source:"tbMe", paint:{"circle-radius":8,"circle-color":"#f08a00","circle-opacity":0.15}},
+      {id:"tb-me", type:"circle", source:"tbMe", paint:{"circle-radius":8,"circle-color":"#f08a00","circle-stroke-width":3,"circle-stroke-color":"#fff"}}
+    ])
+  };
+}
+function glOff(){ $("gl").classList.remove("on"); $("north").classList.remove("on"); }
+function glInit(area){
+  if(!(window.maplibregl&&window.pmtiles&&window.protomapsBasemaps)) return false;
+  try{
+    if(!GL.proto){ maplibregl.addProtocol("pmtiles", new pmtiles.Protocol().tile); GL.proto=true; }
+    GL.map=new maplibregl.Map({container:"gl", style:glStyle(area), interactive:false, fadeDuration:0, attributionControl:{compact:true}});
+    GL.map.addControl(new maplibregl.ScaleControl({maxWidth:110, unit:"metric"}), "bottom-left");
+    GL.map.on("load", function(){ GL.loaded=true; });
+    GL.map.on("error", function(){ if(!GL.loaded){ GL.dead=true; glOff(); draw(); } });
+    var el=document.createElement("div");
+    el.innerHTML='<svg width="48" height="48" viewBox="-24 -24 48 48" aria-hidden="true"><path d="M0 -22 L8 -8 L-8 -8 Z" fill="#f08a00"/></svg>';
+    GL.arrow=new maplibregl.Marker({element:el, rotationAlignment:"map", pitchAlignment:"map"});
+    GL.area=area;
+    return true;
+  }catch(e){ GL.dead=true; return false; }
+}
+function glRender(all){
+  if(GL.dead) return false;
+  var ref=S.cur||S.start||all[0], area=areaFor(ref);
+  if(!area){ glOff(); return false; }
+  if(!GL.map){ if(!glInit(area)) return false; }
+  else if(GL.area!==area){ GL.area=area; GL.map.setStyle(glStyle(area)); }
+  $("gl").classList.add("on"); $("north").classList.add("on");
+  var m=GL.map; m.resize();
+
+  var d=glData(), set=function(id,fc){ var s=m.getSource(id); if(s) s.setData(fc); };
+  set("tbTrail",d.trail); set("tbTrack",d.track); set("tbStart",d.start); set("tbMe",d.me);
+
+  var w=1e9,e=-1e9,s=1e9,n=-1e9;
+  all.forEach(function(p){ if(p.lon<w)w=p.lon; if(p.lon>e)e=p.lon; if(p.lat<s)s=p.lat; if(p.lat>n)n=p.lat; });
+  var k=Math.cos(ref.lat*rad), halfLon=60/(111320*k), halfLat=60/110540;
+  if(e-w<2*halfLon){ var cx=(w+e)/2; w=cx-halfLon; e=cx+halfLon; }
+  if(n-s<2*halfLat){ var cy=(s+n)/2; s=cy-halfLat; n=cy+halfLat; }
+  m.fitBounds([[w,s],[e,n]], {padding:34, maxZoom:17, duration:0});
+
+  if(S.cur && m.getLayer("tb-acc")){
+    var mpp=78271.517*Math.cos(S.cur.lat*rad)/Math.pow(2,m.getZoom());
+    m.setPaintProperty("tb-acc","circle-radius",Math.max(8,Math.min(90,S.cur.acc/mpp)));
+  }
+  var hd=(S.compass!=null?S.compass:S.gpsHead);
+  if(S.cur && hd!=null){ GL.arrow.setLngLat([S.cur.lon,S.cur.lat]).setRotation(hd); if(!GL.arrow._map) GL.arrow.addTo(m); }
+  else if(GL.arrow._map) GL.arrow.remove();
+  return true;
 }
 window.addEventListener("resize", draw);
 if(window.ResizeObserver) new ResizeObserver(draw).observe(cv);
