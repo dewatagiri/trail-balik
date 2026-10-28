@@ -48,6 +48,9 @@ h1{font-size:20px; font-weight:800; margin:0; letter-spacing:-.01em}
 #banner.on{display:block; background:#eef7f1; color:var(--forest)}
 #banner.off{display:block; background:var(--alert); color:#fff}
 #banner.info{display:block; background:#fff7e2; color:#8a5a00}
+#recTip{display:none; width:auto; min-height:0; margin:8px 14px 0; padding:7px 12px; border-radius:10px; border:1px solid #f0c27a; background:#fff7e2; color:#8a5a00; font-size:13px; font-weight:600; text-align:left; line-height:1.35}
+#recTip.on{display:block}
+#recTip span{float:right; margin-left:8px; font-weight:800}
 .mapwrap{position:relative; flex:1; min-height:0; margin:8px 14px; border:1px solid var(--line); border-radius:14px; overflow:hidden; background:#fff}
 canvas{position:absolute; inset:0; width:100%; height:100%; display:block}
 #gl{position:absolute; inset:0; display:none}
@@ -143,6 +146,7 @@ input[type=file]{display:none}
   <div class="stat"><b id="sPace">–</b><span>min/km</span></div>
 </div>
 
+<button id="recTip" aria-label="Recording tip. Tap to hide.">📱 Keep Trail Balik on screen while recording. Don’t switch apps or lock the phone. Tap <b>Dim</b> to save battery.<span aria-hidden="true">✕</span></button>
 <div id="banner"></div>
 
 <div class="mapwrap">
@@ -414,8 +418,8 @@ function startRec(){
   S.rec=true; S.pts=[]; S.dist=0; S.climb=0; S.lastEle=null; S.t0=Date.now(); S.start=null;
   if(S.cur){ S.start={lat:S.cur.lat, lon:S.cur.lon}; addPoint(); }
   else toast("Waiting for GPS fix. Start point will be set at your first fix.");
+  tipHidden=false;
   saveDraft(); keepAwake(); ui();
-  if(!lsGet("tb:dimTip",false)){ lsSet("tb:dimTip",true); banner("info","Keep Trail Balik on screen while recording. To save battery tap Dim, don’t lock the phone."); }
 }
 function askName(def){
   var n=null; try{ n=prompt("Name this track", def); }catch(e){}
@@ -603,7 +607,10 @@ function banner(kind, txt){
   if(!kind){ b.className=""; b.textContent=""; return; }
   b.className=kind; b.textContent=txt;
 }
+var tipHidden=false;
+$("recTip").addEventListener("click", function(){ tipHidden=true; ui(); });
 function ui(){
+  $("recTip").classList.toggle("on", S.rec && !tipHidden);
   var r=$("rec"); r.textContent=S.rec?"Stop":"Record"; r.className=S.rec?"stop":"";
   $("sDist").textContent=(S.dist/1000).toFixed(2);
   $("sClimb").textContent=Math.round(S.climb);
