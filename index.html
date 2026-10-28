@@ -69,6 +69,8 @@ canvas{position:absolute; inset:0; width:100%; height:100%; display:block}
 .actions{display:flex; gap:8px; padding:0 14px 12px}
 button,.btn{font:inherit; font-weight:800; font-size:16px; border-radius:12px; border:1.5px solid var(--ink); background:#fff; color:var(--ink); padding:14px 8px; cursor:pointer; min-height:52px}
 button:focus-visible,.btn:focus-visible{outline:3px solid var(--trail); outline-offset:2px}
+#share{line-height:1.1; padding:5px 4px}
+#share .ic{display:block; font-size:14px; margin-bottom:2px}
 #rec{flex:2; background:var(--forest); border-color:var(--forest); color:#fff}
 #rec.stop{background:var(--alert); border-color:var(--alert)}
 #share{flex:1.3}
@@ -158,7 +160,7 @@ input[type=file]{display:none}
 
 <div class="actions">
   <button id="rec">Record</button>
-  <button id="share">Share</button>
+  <button id="share" aria-label="Send my location"><span class="ic" aria-hidden="true">📍</span>Location</button>
   <button id="dim">Dim</button>
   <button id="more">More</button>
 </div>
@@ -211,6 +213,10 @@ input[type=file]{display:none}
   <div class="row"><button id="a2hs">Add to home screen</button></div>
   <p id="a2hsHelp" style="display:none"></p>
 
+  <h2>Share Trail Balik</h2>
+  <p>Send the app to your hash group or friends. (To send where you are right now, use 📍 Location on the main screen.)</p>
+  <div class="row"><button id="shareApp">Share this app</button></div>
+
   <h2>Please note</h2>
   <div class="box warn">
     <h3>⚠️ Tracking stops when the screen is off</h3>
@@ -228,11 +234,11 @@ input[type=file]{display:none}
       <li><b>Never go alone.</b> Tell someone where you’re going and when you’ll be back.</li>
       <li>Bring a charged phone, a <b>power bank</b>, a torch, water and a whistle.</li>
       <li>Start heading back well before dark.</li>
-      <li><b>Lost?</b> Stop and stay where you are. Blow the whistle 3 times, tap <b>Share</b> to send your location, and call <b>999</b> (or <b>112</b> from any mobile).</li>
+      <li><b>Lost?</b> Stop and stay where you are. Blow the whistle 3 times, tap <b>📍 Location</b> to send where you are, and call <b>999</b> (or <b>112</b> from any mobile).</li>
       <li>You use this app at your own risk.</li>
     </ul>
   </div>
-  <p>Your location and tracks stay on this phone. Nothing is uploaded or collected, unless you tap Share location. This is in line with the principles of Malaysia’s PDPA and Indonesia’s UU PDP.</p>
+  <p>Your location and tracks stay on this phone. Nothing is uploaded or collected, unless you tap 📍 Location to send it yourself. This is in line with the principles of Malaysia’s PDPA and Indonesia’s UU PDP.</p>
   <div class="row"><button id="close">Close</button></div>
 </div>
 
@@ -457,6 +463,14 @@ $("share").addEventListener("click", function(){
   try{ if(navigator.clipboard) navigator.clipboard.writeText(msg).catch(function(){}); }catch(e){}
   var w=window.open("https://wa.me/?text="+encodeURIComponent(msg), "_blank");
   if(!w) toast("Location copied. Paste it in WhatsApp.");
+});
+
+$("shareApp").addEventListener("click", function(){
+  var url="https://dewatagiri.github.io/trail-balik/", txt="Trail Balik: free trail map that works with no signal, and shows the way back to start.";
+  if(navigator.share){ navigator.share({title:"Trail Balik", text:txt, url:url}).catch(function(){}); return; }
+  try{ if(navigator.clipboard) navigator.clipboard.writeText(txt+" "+url).catch(function(){}); }catch(e){}
+  var w=window.open("https://wa.me/?text="+encodeURIComponent(txt+" "+url), "_blank");
+  if(!w) toast("App link copied. Paste it in WhatsApp.");
 });
 
 /* ---------- GPX ---------- */
