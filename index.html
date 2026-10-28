@@ -46,7 +46,11 @@ h1{font-size:20px; font-weight:800; margin:0; letter-spacing:-.01em}
 canvas{position:absolute; inset:0; width:100%; height:100%; display:block}
 #gl{position:absolute; inset:0; display:none}
 #gl.on{display:block}
-#north{position:absolute; top:8px; right:10px; z-index:2; display:none; flex-direction:column; align-items:center; font:800 13px Archivo,system-ui,sans-serif; color:#5d6b63; background:rgba(255,255,255,.85); border-radius:8px; padding:2px 6px; line-height:1.1; pointer-events:none}
+#north{position:absolute; top:8px; right:10px; z-index:2; display:none; flex-direction:column; align-items:center; justify-content:center; min-width:52px; min-height:48px; font:800 13px Archivo,system-ui,sans-serif; color:#5d6b63; background:rgba(255,255,255,.92); border:1px solid var(--line); border-radius:10px; padding:3px 6px; line-height:1.1}
+#north .nr{display:flex; flex-direction:column; align-items:center}
+#north small{font:600 10px Archivo,system-ui,sans-serif; color:var(--muted); margin-top:2px; white-space:nowrap}
+#north.hu{border-color:var(--forest)}
+#north.hu small{color:var(--forest)}
 #north.on{display:flex}
 #recenter{position:absolute; top:8px; left:10px; z-index:2; display:none; font:600 13px Archivo,system-ui,sans-serif; color:#1d5c3a; background:#fff; border:1px solid var(--line); border-radius:8px; padding:6px 10px; min-height:0}
 #recenter.on{display:block}
@@ -128,7 +132,7 @@ input[type=file]{display:none}
 <div class="mapwrap">
   <div id="gl"></div>
   <canvas id="map"></canvas>
-  <div id="north">N<span>&#8593;</span></div>
+  <button id="north" aria-label="Map orientation: north up. Tap to switch."><span class="nr">N<span>&#8593;</span></span><small id="northTxt">North up</small></button>
   <button id="recenter">Recenter</button>
   <div id="empty">Waiting for GPS.<br>If it takes long, move to an open spot away from thick tree cover.</div>
 </div>
@@ -181,6 +185,7 @@ input[type=file]{display:none}
   <p>iPhone: add Trail Balik to your home screen. Otherwise Safari may delete saved maps if you don’t open the app for 7 days.</p>
 
   <h2>Saved tracks</h2>
+  <p>Tap a track’s name to rename it.</p>
   <div id="list"></div>
 
   <h2>Support</h2>
@@ -194,7 +199,7 @@ input[type=file]{display:none}
 
   <h2>Please note</h2>
   <p>Your location and tracks stay on this phone. Nothing is uploaded or collected, unless you tap Share location. This is in line with the principles of Malaysia’s PDPA and Indonesia’s UU PDP.</p>
-  <p>Do not lock the phone with the power button. The browser stops GPS when the screen locks. Tap Dim instead: the screen goes black to save battery, and tracking keeps running. Double-tap to wake.</p>
+  <p>Do not lock the phone with the power button or switch to another app. The browser stops GPS while Trail Balik is not on screen, and that stretch shows as a dotted grey line. Tap Dim instead: the screen goes black to save battery, and tracking keeps running. Double-tap to wake.</p>
   <p>GPS is a guide only. It can drift under thick canopy, and it needs your battery. Tell your group where you are going and bring a power bank.</p>
   <div class="row"><button id="close">Close</button></div>
 </div>
@@ -207,7 +212,7 @@ input[type=file]{display:none}
 "use strict";
 var $ = function(id){return document.getElementById(id)};
 var S = {rec:false, pts:[], trail:null, cur:null, start:null, t0:0, dist:0, climb:0, lastEle:null,
-         compass:null, gpsHead:null, off:false, got:false};
+         compass:null, gpsHead:null, off:false, got:false, lastFix:0, gapNext:false};
 var KEY_TRK = "tb:tracks", KEY_DRAFT = "tb:draft";
 
 /* ---------- storage ---------- */
@@ -255,6 +260,8 @@ function nearestOnTrail(){
 /* ---------- GPS ---------- */
 function onFix(pos){
   var c=pos.coords;
+  if(S.rec && S.lastFix && pos.timestamp-S.lastFix>20000) S.gapNext=true;   /* GPS went quiet: mark a gap */
+  S.lastFix=pos.timestamp;
   S.cur={lat:c.latitude, lon:c.longitude, acc:c.accuracy, ele:(c.altitude==null?null:c.altitude), t:pos.timestamp};
   S.got=true;
   if(c.heading!=null && !isNaN(c.heading) && c.speed>0.6) S.gpsHead=c.heading;
@@ -277,14 +284,19 @@ function onErr(e){
       : "Location is blocked for this page.<br><br>iPhone: Settings, Privacy, Location Services, Safari Websites, While Using.<br>Android: Chrome menu, Settings, Site settings, Location, then allow.<br><br>Then tap the GPS label to retry.")
     : "No GPS signal yet.<br>Move to an open spot away from thick tree cover.";
 }
+var watchId=null;
 function watch(){
   if(!navigator.geolocation){ $("gps").textContent="GPS not supported"; return; }
-  navigator.geolocation.watchPosition(onFix, onErr, {enableHighAccuracy:true, maximumAge:2000, timeout:30000});
+  /* restart cleanly: some phones never resume a watch after the app was in the background */
+  if(watchId!=null){ try{ navigator.geolocation.clearWatch(watchId); }catch(e){} }
+  watchId=navigator.geolocation.watchPosition(onFix, onErr, {enableHighAccuracy:true, maximumAge:2000, timeout:30000});
 }
 $("gps").addEventListener("click", watch);
 
+var savedAt=0;
 function addPoint(){
   var c=S.cur, last=S.pts[S.pts.length-1];
+  if(!last && !S.start){ S.start={lat:c.lat, lon:c.lon}; toast("Start point set."); }
   if(last){
     var d=hav(last,c), dt=Math.max(1,(c.t-last.t)/1000);
     if(d<5) return;
@@ -296,14 +308,25 @@ function addPoint(){
     else if(c.ele-S.lastEle>=3){ S.climb+=c.ele-S.lastEle; S.lastEle=c.ele; }
     else if(S.lastEle-c.ele>=3){ S.lastEle=c.ele; }
   }
-  S.pts.push({lat:c.lat, lon:c.lon, ele:c.ele, t:c.t});
-  if(S.pts.length%8===0) saveDraft();
+  var pt={lat:c.lat, lon:c.lon, ele:c.ele, t:c.t};
+  if(S.gapNext && last){ pt.g=1; }
+  S.gapNext=false;
+  S.pts.push(pt);
+  if(Date.now()-savedAt>5000) saveDraft();
 }
 
 /* ---------- compass ---------- */
+var orientAt=0;
 function onOrient(e){
-  if(e.webkitCompassHeading!=null) S.compass=e.webkitCompassHeading;
-  else if(e.absolute && e.alpha!=null) S.compass=(360-e.alpha)%360;
+  var h=null;
+  if(e.webkitCompassHeading!=null) h=e.webkitCompassHeading;
+  else if(e.absolute && e.alpha!=null) h=(360-e.alpha)%360;
+  if(h==null || isNaN(h)) return;
+  var so=(screen.orientation&&screen.orientation.angle!=null) ? screen.orientation.angle : (window.orientation||0);
+  h=(h+so+360)%360;
+  if(S.compass==null) S.compass=h;
+  else { var d=((h-S.compass+540)%360)-180; S.compass=(S.compass+d*0.3+360)%360; }   /* smooth the jitter */
+  if(HU){ var n=Date.now(); if(n-orientAt>150){ orientAt=n; draw(); } }
 }
 var compassOn=false;
 function enableCompass(){
@@ -313,9 +336,11 @@ function enableCompass(){
       window.addEventListener("deviceorientationabsolute", onOrient, true);
       window.addEventListener("deviceorientation", onOrient, true);
     };
+    listen();   /* harmless if not allowed yet: no events arrive */
     if(typeof DeviceOrientationEvent!=="undefined" && typeof DeviceOrientationEvent.requestPermission==="function"){
-      DeviceOrientationEvent.requestPermission().then(function(r){ if(r==="granted") listen(); }).catch(function(){});
-    } else listen();
+      /* iPhone only allows this after a tap; if it was refused, let a later tap try again */
+      DeviceOrientationEvent.requestPermission().then(function(r){ if(r!=="granted") compassOn=false; }).catch(function(){ compassOn=false; });
+    }
   }catch(e){}
 }
 
@@ -325,16 +350,20 @@ function keepAwake(){ try{ if(navigator.wakeLock) navigator.wakeLock.request("sc
 function releaseAwake(){ try{ if(wake){wake.release(); wake=null;} }catch(e){} }
 var hiddenAt=0;
 document.addEventListener("visibilitychange", function(){
-  if(document.visibilityState==="hidden"){ if(S.rec) hiddenAt=Date.now(); }
+  if(document.visibilityState==="hidden"){ if(S.rec){ hiddenAt=Date.now(); saveDraft(); } }
   else {
     if(S.rec || darkOn()) keepAwake();
+    watch();
     if(hiddenAt && S.rec){
       var gap=Date.now()-hiddenAt;
-      if(gap>30000) banner("info","Tracking paused for "+fmtT(gap)+" while the screen was off. Use Dim, not the power button.");
+      if(gap>10000) S.gapNext=true;
+      if(gap>30000) banner("info","GPS was off for "+fmtT(gap)+" while you were in another app or the screen was locked. That stretch shows as a dotted grey line. Use Dim to keep tracking.");
     }
     hiddenAt=0;
+    pending=false; draw();
   }
 });
+window.addEventListener("pagehide", function(){ if(S.rec) saveDraft(); });
 
 function startRec(){
   enableCompass();
@@ -343,26 +372,37 @@ function startRec(){
   else toast("Waiting for GPS fix. Start point will be set at your first fix.");
   saveDraft(); keepAwake(); ui();
 }
+function askName(def){
+  var n=null; try{ n=prompt("Name this track", def); }catch(e){}
+  return (n==null ? "" : String(n)).trim().slice(0,60);
+}
 function stopRec(){
-  S.rec=false; releaseAwake(); lsDel(KEY_DRAFT);
   if(S.pts.length>=2){
     var list=lsGet(KEY_TRK,[]);
     var d=new Date(S.t0);
-    var name="Hash "+d.toLocaleDateString(undefined,{day:"numeric",month:"short"})+", "+d.toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit"});
+    var def="Hash "+d.toLocaleDateString(undefined,{day:"numeric",month:"short"})+", "+d.toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit"});
+    var name=askName(def)||def;
     list.unshift({name:name, t0:S.t0, t1:Date.now(), dist:Math.round(S.dist), climb:Math.round(S.climb),
-      p:S.pts.map(function(p){return [+p.lat.toFixed(6), +p.lon.toFixed(6), p.ele==null?null:Math.round(p.ele), p.t];})});
-    lsSet(KEY_TRK, list.slice(0,30));
-    toast("Saved: "+name);
+      p:S.pts.map(function(p){ var a=[+p.lat.toFixed(6), +p.lon.toFixed(6), p.ele==null?null:Math.round(p.ele), p.t]; if(p.g) a.push(1); return a; })});
+    var dropped=list.length>30;
+    if(!lsSet(KEY_TRK, list.slice(0,30))){
+      toast("Phone storage is full, track not saved. Delete old tracks in More, then tap Stop again.");
+      return;                                   /* keep recording so nothing is lost */
+    }
+    toast("Saved: "+name+(dropped?" (oldest track removed, max 30)":""));
   } else toast("Track too short, not saved.");
+  S.rec=false; releaseAwake(); lsDel(KEY_DRAFT);
   ui();
 }
 function saveDraft(){
+  savedAt=Date.now();
   lsSet(KEY_DRAFT,{t0:S.t0, start:S.start, dist:S.dist, climb:S.climb, lastEle:S.lastEle, pts:S.pts});
 }
 function recoverDraft(){
   var d=lsGet(KEY_DRAFT,null);
   if(d && d.pts && d.pts.length){
     S.rec=true; S.t0=d.t0; S.start=d.start; S.dist=d.dist||0; S.climb=d.climb||0; S.lastEle=d.lastEle; S.pts=d.pts;
+    S.gapNext=true;                             /* the page was closed, so GPS was off for a while */
     keepAwake();
     banner("info","Recovered your unfinished track. Still recording.");
     setTimeout(function(){ if(S.off===false) banner(null); },6000);
@@ -393,8 +433,9 @@ function parseGPX(txt){
   return out;
 }
 function toGPX(tr){
-  var s='<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Trail Balik" xmlns="http://www.topografix.com/GPX/1/1"><trk><name>'+tr.name+'</name><trkseg>\n';
+  var s='<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Trail Balik" xmlns="http://www.topografix.com/GPX/1/1"><trk><name>'+esc(tr.name)+'</name><trkseg>\n';
   tr.p.forEach(function(p){
+    if(p[4]) s+='</trkseg><trkseg>\n';
     s+='<trkpt lat="'+p[0]+'" lon="'+p[1]+'">'+(p[2]!=null?'<ele>'+p[2]+'</ele>':'')+'<time>'+new Date(p[3]).toISOString()+'</time></trkpt>\n';
   });
   return s+'</trkseg></trk></gpx>';
@@ -436,13 +477,18 @@ function renderList(){
   list.forEach(function(tr,i){
     var row=document.createElement("div"); row.className="trk";
     var info=document.createElement("div");
-    info.textContent=tr.name;
+    info.textContent=tr.name+" ✎";
+    info.setAttribute("role","button"); info.style.cursor="pointer";
+    info.addEventListener("click", function(){
+      var n=askName(tr.name); if(!n||n===tr.name) return;
+      var l=lsGet(KEY_TRK,[]); if(!l[i]) return; l[i].name=n; lsSet(KEY_TRK,l); renderList();
+    });
     var sm=document.createElement("small");
     sm.textContent=fmtD(tr.dist)+" · "+fmtT(tr.t1-tr.t0)+" · "+tr.climb+" m climb";
     info.appendChild(sm); row.appendChild(info);
     [["Follow",function(){ S.trail=tr.p.map(function(p){return {lat:p[0],lon:p[1]};}); closeSheet(); toast("Following "+tr.name); ui(); }],
      ["GPX",function(){ exportTrack(i); }],
-     ["Delete",function(){ var l=lsGet(KEY_TRK,[]); l.splice(i,1); lsSet(KEY_TRK,l); renderList(); }]
+     ["Delete",function(){ if(!confirm("Delete “"+tr.name+"”? This can’t be undone.")) return; var l=lsGet(KEY_TRK,[]); l.splice(i,1); lsSet(KEY_TRK,l); renderList(); }]
     ].forEach(function(b){
       var bt=document.createElement("button"); bt.textContent=b[0]; bt.addEventListener("click",b[1]); row.appendChild(bt);
     });
@@ -542,8 +588,10 @@ function render(){
   if(glRender(all)){ cv.style.visibility="hidden"; return; }
   cv.style.visibility="";
 
+  var hd0=headNow(), rot=(HU&&hd0!=null)?hd0*rad:0, cr=Math.cos(-rot), sr=Math.sin(-rot);
+  $("north").classList.add("on"); northUi(rot/rad);
   var ref=S.cur||all[0], k=Math.cos(ref.lat*rad);
-  var P=function(p){return {x:(p.lon-ref.lon)*k*111320, y:-(p.lat-ref.lat)*110540};};
+  var P=function(p){ var x=(p.lon-ref.lon)*k*111320, y=-(p.lat-ref.lat)*110540; return {x:x*cr-y*sr, y:x*sr+y*cr}; };
   var minX=1e9,maxX=-1e9,minY=1e9,maxY=-1e9;
   all.forEach(function(p){var q=P(p); if(q.x<minX)minX=q.x; if(q.x>maxX)maxX=q.x; if(q.y<minY)minY=q.y; if(q.y>maxY)maxY=q.y;});
   var spanX=Math.max(maxX-minX,120), spanY=Math.max(maxY-minY,120), pad=34;
@@ -558,8 +606,10 @@ function render(){
   }
   /* my track */
   if(S.pts.length>1){
-    ctx.beginPath(); S.pts.forEach(function(p,i){var q=T(p); i?ctx.lineTo(q.x,q.y):ctx.moveTo(q.x,q.y);});
+    ctx.beginPath(); S.pts.forEach(function(p,i){var q=T(p); (i&&!p.g)?ctx.lineTo(q.x,q.y):ctx.moveTo(q.x,q.y);});
     ctx.strokeStyle="#1d5c3a"; ctx.lineWidth=4; ctx.lineJoin="round"; ctx.lineCap="round"; ctx.stroke();
+    ctx.beginPath(); S.pts.forEach(function(p,i){ if(i&&p.g){ var a=T(S.pts[i-1]), b=T(p); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); } });
+    ctx.strokeStyle="#8a958f"; ctx.lineWidth=3; ctx.setLineDash([2,7]); ctx.stroke(); ctx.setLineDash([]);
   }
   /* start */
   if(S.start){
@@ -573,15 +623,12 @@ function render(){
     var ar=Math.max(8,S.cur.acc*sc);
     ctx.beginPath(); ctx.arc(m.x,m.y,Math.min(ar,90),0,7); ctx.fillStyle="rgba(240,138,0,.15)"; ctx.fill();
     if(hd!=null){
-      ctx.save(); ctx.translate(m.x,m.y); ctx.rotate(hd*rad);
+      ctx.save(); ctx.translate(m.x,m.y); ctx.rotate(hd*rad-rot);
       ctx.beginPath(); ctx.moveTo(0,-22); ctx.lineTo(8,-8); ctx.lineTo(-8,-8); ctx.closePath(); ctx.fillStyle="#f08a00"; ctx.fill(); ctx.restore();
     }
     ctx.beginPath(); ctx.arc(m.x,m.y,8,0,7); ctx.fillStyle="#f08a00"; ctx.fill(); ctx.lineWidth=3; ctx.strokeStyle="#fff"; ctx.stroke();
   }
-  /* north + scale */
-  ctx.fillStyle="#5d6b63"; ctx.font="800 13px Archivo,system-ui,sans-serif"; ctx.textAlign="center"; ctx.textBaseline="middle";
-  ctx.fillText("N",w-18,16);
-  ctx.beginPath(); ctx.moveTo(w-18,36); ctx.lineTo(w-18,26); ctx.lineTo(w-22,31); ctx.moveTo(w-18,26); ctx.lineTo(w-14,31); ctx.strokeStyle="#5d6b63"; ctx.lineWidth=1.5; ctx.stroke();
+  /* scale (north is the #north button) */
   var steps=[10,20,50,100,200,500,1000,2000,5000,10000], len=steps[0];
   for(var i=0;i<steps.length;i++){ if(steps[i]*sc<=110) len=steps[i]; }
   var px=len*sc;
@@ -604,7 +651,18 @@ function areaFor(p){
 }
 function fcLine(pts){ return {type:"FeatureCollection", features:(pts&&pts.length>1)?[{type:"Feature",properties:{},geometry:{type:"LineString",coordinates:pts.map(function(p){return [p.lon,p.lat];})}}]:[]}; }
 function fcPt(p){ return {type:"FeatureCollection", features:p?[{type:"Feature",properties:{},geometry:{type:"Point",coordinates:[p.lon,p.lat]}}]:[]}; }
-function glData(){ return {trail:fcLine(S.trail), track:fcLine(S.pts), start:fcPt(S.start), me:fcPt(S.cur)}; }
+/* split my track where GPS was off: solid parts, plus the straight gaps between them */
+function fcTrack(pts){
+  var solid=[], gaps=[], cur=[];
+  (pts||[]).forEach(function(p,i){
+    if(i&&p.g){ gaps.push([[pts[i-1].lon,pts[i-1].lat],[p.lon,p.lat]]); if(cur.length>1) solid.push(cur); cur=[]; }
+    cur.push([p.lon,p.lat]);
+  });
+  if(cur.length>1) solid.push(cur);
+  var fc=function(l){ return {type:"FeatureCollection", features:l.length?[{type:"Feature",properties:{},geometry:{type:"MultiLineString",coordinates:l}}]:[]}; };
+  return {solid:fc(solid), gaps:fc(gaps)};
+}
+function glData(){ var t=fcTrack(S.pts); return {trail:fcLine(S.trail), track:t.solid, gaps:t.gaps, start:fcPt(S.start), me:fcPt(S.cur)}; }
 function glStyle(area){
   var d=glData();
   var base=protomapsBasemaps.layers("protomaps", protomapsBasemaps.namedFlavor("light"), {lang:"en"});
@@ -614,11 +672,12 @@ function glStyle(area){
     sprite:BASE+"sprites/light",
     sources:{
       protomaps:{type:"vector", url:"pmtiles://"+BASE+"maps/"+area.id+".pmtiles", maxzoom:14, attribution:"&copy; OpenStreetMap contributors &middot; Protomaps"},
-      tbTrail:{type:"geojson", data:d.trail}, tbTrack:{type:"geojson", data:d.track},
+      tbTrail:{type:"geojson", data:d.trail}, tbTrack:{type:"geojson", data:d.track}, tbGap:{type:"geojson", data:d.gaps},
       tbStart:{type:"geojson", data:d.start}, tbMe:{type:"geojson", data:d.me}
     },
     layers:base.concat([
       {id:"tb-trail", type:"line", source:"tbTrail", layout:{"line-cap":"round","line-join":"round"}, paint:{"line-color":"#1b6fd1","line-width":4,"line-dasharray":[0.5,2.2]}},
+      {id:"tb-gap", type:"line", source:"tbGap", layout:{"line-cap":"round"}, paint:{"line-color":"#8a958f","line-width":3,"line-dasharray":[0.5,2.5]}},
       {id:"tb-track", type:"line", source:"tbTrack", layout:{"line-cap":"round","line-join":"round"}, paint:{"line-color":"#1d5c3a","line-width":4}},
       {id:"tb-start", type:"circle", source:"tbStart", paint:{"circle-radius":11,"circle-color":"#fff","circle-stroke-width":3,"circle-stroke-color":"#1d5c3a"}},
       {id:"tb-start-s", type:"symbol", source:"tbStart", layout:{"text-field":"S","text-font":["Noto Sans Medium"],"text-size":12,"text-allow-overlap":true,"text-ignore-placement":true}, paint:{"text-color":"#1d5c3a"}},
@@ -657,26 +716,57 @@ function glRender(all){
   var ref=S.cur||S.start||all[0], area=areaFor(ref);
   if(!area){ glOff(); return false; }
   if(!GL.map){ if(!glInit(area)) return false; }
-  else if(GL.area!==area){ GL.area=area; GL.map.setStyle(glStyle(area)); }
+  else if(GL.area!==area){ GL.area=area; GL.key=null; GL.map.setStyle(glStyle(area)); }
   $("gl").classList.add("on"); $("north").classList.add("on");
-  var m=GL.map; m.resize();
+  var m=GL.map, box=$("gl");
+  if(box.clientWidth!==GL.w || box.clientHeight!==GL.h){ GL.w=box.clientWidth; GL.h=box.clientHeight; m.resize(); }
 
-  var d=glData(), set=function(id,fc){ var s=m.getSource(id); if(s) s.setData(fc); };
-  set("tbTrail",d.trail); set("tbTrack",d.track); set("tbStart",d.start); set("tbMe",d.me);
+  /* only push new data when something changed (the compass redraws often in heading up) */
+  var key=[S.pts.length, S.cur&&S.cur.t, S.cur&&S.cur.acc, S.trail&&S.trail.length, S.start&&S.start.lat, GL.area&&GL.area.id].join();
+  if(key!==GL.key){
+    GL.key=key;
+    var d=glData(), set=function(id,fc){ var s=m.getSource(id); if(s) s.setData(fc); };
+    set("tbTrail",d.trail); set("tbTrack",d.track); set("tbGap",d.gaps); set("tbStart",d.start); set("tbMe",d.me);
+  }
 
   var w=1e9,e=-1e9,s=1e9,n=-1e9;
   all.forEach(function(p){ if(p.lon<w)w=p.lon; if(p.lon>e)e=p.lon; if(p.lat<s)s=p.lat; if(p.lat>n)n=p.lat; });
   var k=Math.cos(ref.lat*rad), halfLon=60/(111320*k), halfLat=60/110540;
   if(e-w<2*halfLon){ var cx=(w+e)/2; w=cx-halfLon; e=cx+halfLon; }
   if(n-s<2*halfLat){ var cy=(s+n)/2; s=cy-halfLat; n=cy+halfLat; }
-  if(GL.follow) m.fitBounds([[w,s],[e,n]], {padding:34, maxZoom:17, duration:0});
+  var hd=headNow();
+  if(GL.follow){
+    if(HU && hd!=null && S.cur) m.jumpTo({center:[S.cur.lon,S.cur.lat], bearing:hd, zoom:Math.max(15,Math.min(18,m.getZoom()))});
+    else m.fitBounds([[w,s],[e,n]], {padding:34, maxZoom:17, duration:0, bearing:0});
+  } else if(!HU && m.getBearing()!==0) m.setBearing(0);
+  northUi(m.getBearing());
 
   glAcc();
-  var hd=(S.compass!=null?S.compass:S.gpsHead);
   if(S.cur && hd!=null){ GL.arrow.setLngLat([S.cur.lon,S.cur.lat]).setRotation(hd); if(!GL.arrow._map) GL.arrow.addTo(m); }
   else if(GL.arrow._map) GL.arrow.remove();
   return true;
 }
+/* ---------- map orientation: north up, or heading up (map turns with you) ---------- */
+var HU=lsGet("tb:orient","n")==="h";
+function headNow(){ return S.compass!=null ? S.compass : S.gpsHead; }
+function northUi(brg){
+  var b=$("north");
+  b.classList.toggle("hu",HU);
+  $("northTxt").textContent=HU?"Heading up":"North up";
+  b.querySelector(".nr").style.transform="rotate("+(-(brg||0))+"deg)";
+  b.setAttribute("aria-label","Map orientation: "+(HU?"heading up":"north up")+". Tap to switch.");
+}
+$("north").addEventListener("click", function(){
+  HU=!HU; lsSet("tb:orient",HU?"h":"n");
+  if(HU){
+    enableCompass(); GL.follow=true; $("recenter").classList.remove("on");
+    toast(headNow()==null ? "Heading up. Walk a few steps so the map knows which way you face." : "Heading up: the map turns with you.");
+  } else toast("North up");
+  draw();
+});
+if(HU) enableCompass();
+document.addEventListener("click", function(){ if(HU && S.compass==null) enableCompass(); }, true);
+
 window.addEventListener("resize", draw);
 if(window.ResizeObserver) new ResizeObserver(draw).observe(cv);
 
