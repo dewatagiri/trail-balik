@@ -82,6 +82,14 @@ button:focus-visible,.btn:focus-visible{outline:3px solid var(--trail); outline-
 #sheet h2{font-size:17px; margin:18px 0 8px; font-weight:800}
 #sheet h2:first-child{margin-top:2px}
 #sheet p{font-size:14.5px; line-height:1.5; margin:6px 0; color:var(--muted)}
+.box{border:1.5px solid; border-radius:12px; padding:10px 12px 4px; margin:10px 0}
+.box h3{font-size:15.5px; font-weight:800; margin:0 0 4px}
+.box ul{margin:4px 0 6px; padding-left:20px}
+.box li{font-size:14.5px; line-height:1.5; margin:4px 0; color:var(--ink)}
+.box.warn{background:#fff7e8; border-color:#f0c27a}
+.box.warn h3{color:#8a5300}
+.box.safe{background:#fdf0f0; border-color:#e8a5a5}
+.box.safe h3{color:var(--alert)}
 .row{display:flex; gap:8px; flex-wrap:wrap; margin:8px 0}
 .row .btn,.row button{flex:1; min-width:130px; padding:11px 10px; font-size:15px; text-align:center}
 .trk{display:flex; align-items:center; gap:8px; padding:10px 0; border-top:1px solid var(--line)}
@@ -204,9 +212,27 @@ input[type=file]{display:none}
   <p id="a2hsHelp" style="display:none"></p>
 
   <h2>Please note</h2>
+  <div class="box warn">
+    <h3>⚠️ Tracking stops when the screen is off</h3>
+    <ul>
+      <li>Trail Balik is a <b>web app</b>: it runs inside your browser (Chrome or Safari). That keeps it light: no app store, no install, about 1 MB plus the maps you choose, and it works on almost any phone.</li>
+      <li>The catch: browsers <b>stop GPS when the screen locks or you switch to another app</b>, to protect your battery and privacy. Trail Balik can’t change that.</li>
+      <li>So keep Trail Balik on screen. To save battery, tap <b>Dim</b> instead of the power button: the screen goes black and tracking keeps running. Double-tap to wake.</li>
+      <li>Any stretch it missed shows as a <b>dotted grey line</b>, counted as a straight line.</li>
+    </ul>
+  </div>
+  <div class="box safe">
+    <h3>🌿 Stay safe in the jungle</h3>
+    <ul>
+      <li>Trail Balik is a <b>helper, not a lifeline</b>. GPS can drift under thick canopy, maps can miss small trails, and phones die.</li>
+      <li><b>Never go alone.</b> Tell someone where you’re going and when you’ll be back.</li>
+      <li>Bring a charged phone, a <b>power bank</b>, a torch, water and a whistle.</li>
+      <li>Start heading back well before dark.</li>
+      <li><b>Lost?</b> Stop and stay where you are. Blow the whistle 3 times, tap <b>Share</b> to send your location, and call <b>999</b> (or <b>112</b> from any mobile).</li>
+      <li>You use this app at your own risk.</li>
+    </ul>
+  </div>
   <p>Your location and tracks stay on this phone. Nothing is uploaded or collected, unless you tap Share location. This is in line with the principles of Malaysia’s PDPA and Indonesia’s UU PDP.</p>
-  <p>Do not lock the phone with the power button or switch to another app. The browser stops GPS while Trail Balik is not on screen, and that stretch shows as a dotted grey line. Tap Dim instead: the screen goes black to save battery, and tracking keeps running. Double-tap to wake.</p>
-  <p>GPS is a guide only. It can drift under thick canopy, and it needs your battery. Tell your group where you are going and bring a power bank.</p>
   <div class="row"><button id="close">Close</button></div>
 </div>
 
@@ -383,6 +409,7 @@ function startRec(){
   if(S.cur){ S.start={lat:S.cur.lat, lon:S.cur.lon}; addPoint(); }
   else toast("Waiting for GPS fix. Start point will be set at your first fix.");
   saveDraft(); keepAwake(); ui();
+  if(!lsGet("tb:dimTip",false)){ lsSet("tb:dimTip",true); banner("info","Keep Trail Balik on screen while recording. To save battery tap Dim, don’t lock the phone."); }
 }
 function askName(def){
   var n=null; try{ n=prompt("Name this track", def); }catch(e){}
