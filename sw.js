@@ -4,10 +4,11 @@
      Saved maps are answered from the cache, including the Range requests
      the map makes for each tile. */
 "use strict";
-var SHELL = "tb-shell-v1", MAPS = "tb-maps", FONTS = "tb-fonts";
+var SHELL = "tb-shell-v2", MAPS = "tb-maps", FONTS = "tb-fonts";
 var FILES = [
   "./", "index.html",
   "vendor/maplibre-gl.js", "vendor/maplibre-gl.css", "vendor/pmtiles.js", "vendor/protomaps-basemaps.js",
+  "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png", "icons/icon-maskable-512.png", "icons/apple-touch-icon.png",
   "sprites/light.json", "sprites/light.png", "sprites/light@2x.json", "sprites/light@2x.png"
 ];
 ["Noto Sans Regular", "Noto Sans Medium", "Noto Sans Italic"].forEach(function(f){

@@ -6,6 +6,12 @@
 <meta name="color-scheme" content="light">
 <meta name="theme-color" content="#ffffff">
 <title>Trail Balik – never lose the trail</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Trail Balik">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800&display=swap" rel="stylesheet">
@@ -193,9 +199,9 @@ input[type=file]{display:none}
   <div class="row"><button id="supportBtn">Support Trail Balik</button></div>
 
   <h2>Add to home screen</h2>
-  <p>Open it like an app, nothing to download.</p>
+  <p id="a2hsTxt">Open it like an app from its own icon. Do this before downloading offline maps.</p>
   <div class="row"><button id="a2hs">Add to home screen</button></div>
-  <p id="a2hsHelp" style="display:none">iPhone: Safari, tap Share, then Add to Home Screen. Android: Chrome, tap the ⋮ menu, then Add to Home screen.</p>
+  <p id="a2hsHelp" style="display:none"></p>
 
   <h2>Please note</h2>
   <p>Your location and tracks stay on this phone. Nothing is uploaded or collected, unless you tap Share location. This is in line with the principles of Malaysia’s PDPA and Indonesia’s UU PDP.</p>
@@ -262,7 +268,8 @@ function onFix(pos){
   var c=pos.coords;
   if(S.rec && S.lastFix && pos.timestamp-S.lastFix>20000) S.gapNext=true;   /* GPS went quiet: mark a gap */
   S.lastFix=pos.timestamp;
-  S.cur={lat:c.latitude, lon:c.longitude, acc:c.accuracy, ele:(c.altitude==null?null:c.altitude), t:pos.timestamp};
+  S.cur={lat:c.latitude, lon:c.longitude, acc:c.accuracy, ele:(c.altitude==null?null:c.altitude), t:pos.timestamp,
+         spd:(c.speed==null||isNaN(c.speed)||c.speed<0)?null:c.speed};
   S.got=true;
   if(c.heading!=null && !isNaN(c.heading) && c.speed>0.6) S.gpsHead=c.heading;
   var g=$("gps");
@@ -299,8 +306,13 @@ function addPoint(){
   if(!last && !S.start){ S.start={lat:c.lat, lon:c.lon}; toast("Start point set."); }
   if(last){
     var d=hav(last,c), dt=Math.max(1,(c.t-last.t)/1000);
-    if(d<5) return;
-    if(d/dt>12) return;               /* ignore GPS jumps */
+    /* inside the GPS wobble circle: not a real move (stops parked phones adding fake km) */
+    if(d<Math.max(5, Math.min(c.acc,30))) return;
+    /* the phone says we're standing still and the move is within twice the wobble: ignore it */
+    if(c.spd!=null && c.spd<0.3 && d<2*Math.max(c.acc,10)) return;
+    /* a lone jump faster than 180 km/h is a GPS spike; if it repeats it's real, so take it */
+    if(d/dt>50 && !S.gapNext){ S.jumps=(S.jumps||0)+1; if(S.jumps<3) return; }
+    S.jumps=0;
     S.dist+=d;
   }
   if(c.ele!=null){
@@ -503,11 +515,28 @@ $("more").addEventListener("click", openSheet);
 $("close").addEventListener("click", closeSheet);
 $("scrim").addEventListener("click", closeSheet);
 var deferred=null;
+function installed(){ try{ return matchMedia("(display-mode: standalone)").matches || navigator.standalone===true; }catch(e){ return false; } }
+function a2hsUi(){
+  if(installed()){
+    $("a2hsTxt").textContent="Done: you opened Trail Balik from your home screen.";
+    $("a2hs").style.display="none"; $("a2hsHelp").style.display="none";
+  }
+}
 window.addEventListener("beforeinstallprompt", function(e){ e.preventDefault(); deferred=e; });
+window.addEventListener("appinstalled", function(){ deferred=null; toast("Added. Open Trail Balik from your home screen."); });
 $("a2hs").addEventListener("click", function(){
-  if(deferred){ deferred.prompt(); deferred=null; }
-  else $("a2hsHelp").style.display="block";
+  if(deferred){
+    deferred.prompt();
+    deferred.userChoice.then(function(c){ if(c&&c.outcome==="accepted") toast("Added to your home screen."); }).catch(function(){});
+    deferred=null; return;
+  }
+  var ua=navigator.userAgent, ios=/iPad|iPhone|iPod/.test(ua)||(/Macintosh/.test(ua)&&navigator.maxTouchPoints>1), h=$("a2hsHelp");
+  if(ios) h.innerHTML="<b>iPhone / iPad:</b> tap the <b>Share</b> button (square with an arrow, at the bottom or top of Safari), scroll down, tap <b>Add to Home Screen</b>, then <b>Add</b>.";
+  else if(/Android/.test(ua)) h.innerHTML="<b>Android:</b> tap Chrome’s <b>⋮</b> menu (top right), then <b>Add to Home screen</b> or <b>Install app</b>. If you don’t see it, reload this page once and try again.";
+  else h.innerHTML="On your phone, open this page in Chrome (Android) or Safari (iPhone), then use the browser menu: <b>Add to Home Screen</b>.";
+  h.style.display="block"; h.scrollIntoView({block:"nearest", behavior:"smooth"});
 });
+a2hsUi();
 
 /* ---------- dim mode: screen stays on but shows black ---------- */
 function darkOn(){ return $("dark").classList.contains("on"); }
