@@ -48,6 +48,8 @@ canvas{position:absolute; inset:0; width:100%; height:100%; display:block}
 #gl.on{display:block}
 #north{position:absolute; top:8px; right:10px; z-index:2; display:none; flex-direction:column; align-items:center; font:800 13px Archivo,system-ui,sans-serif; color:#5d6b63; background:rgba(255,255,255,.85); border-radius:8px; padding:2px 6px; line-height:1.1; pointer-events:none}
 #north.on{display:flex}
+#recenter{position:absolute; top:8px; left:10px; z-index:2; display:none; font:600 13px Archivo,system-ui,sans-serif; color:#1d5c3a; background:#fff; border:1px solid var(--line); border-radius:8px; padding:6px 10px; min-height:0}
+#recenter.on{display:block}
 .maplibregl-ctrl-scale{font-family:Archivo,system-ui,sans-serif; font-weight:600}
 #empty{position:absolute; inset:0; display:flex; align-items:center; justify-content:center; text-align:center; padding:24px; color:var(--muted); font-size:15px; line-height:1.45; pointer-events:none}
 .back{display:flex; align-items:center; gap:12px; margin:0 14px 8px; padding:8px 12px; border:1px solid var(--line); border-radius:12px; background:var(--soft)}
@@ -127,6 +129,7 @@ input[type=file]{display:none}
   <div id="gl"></div>
   <canvas id="map"></canvas>
   <div id="north">N<span>&#8593;</span></div>
+  <button id="recenter">Recenter</button>
   <div id="empty">Waiting for GPS.<br>If it takes long, move to an open spot away from thick tree cover.</div>
 </div>
 
@@ -588,7 +591,7 @@ var AREAS=[
   {id:"pahang-west",     bb:[101.30,2.90,102.90,4.45]}
 ];
 var BASE=location.href.replace(/[?#].*$/,"").replace(/[^\/]*$/,"");
-var GL={map:null, area:null, dead:false, loaded:false, proto:false, me:null, arrow:null};
+var GL={follow:true, map:null, area:null, dead:false, loaded:false, proto:false, me:null, arrow:null};
 function areaFor(p){
   for(var i=0;i<AREAS.length;i++){ var b=AREAS[i].bb; if(p.lon>=b[0]&&p.lon<=b[2]&&p.lat>=b[1]&&p.lat<=b[3]) return AREAS[i]; }
   return null;
@@ -618,14 +621,23 @@ function glStyle(area){
     ])
   };
 }
-function glOff(){ $("gl").classList.remove("on"); $("north").classList.remove("on"); }
+function glOff(){ $("gl").classList.remove("on"); $("north").classList.remove("on"); $("recenter").classList.remove("on"); }
+function glAcc(){
+  var m=GL.map; if(!m||!S.cur||!m.getLayer("tb-acc")) return;
+  var mpp=78271.517*Math.cos(S.cur.lat*rad)/Math.pow(2,m.getZoom());
+  m.setPaintProperty("tb-acc","circle-radius",Math.max(8,Math.min(90,S.cur.acc/mpp)));
+}
+$("recenter").addEventListener("click", function(){ GL.follow=true; $("recenter").classList.remove("on"); draw(); });
 function glInit(area){
   if(!(window.maplibregl&&window.pmtiles&&window.protomapsBasemaps)) return false;
   try{
     if(!GL.proto){ maplibregl.addProtocol("pmtiles", new pmtiles.Protocol().tile); GL.proto=true; }
-    GL.map=new maplibregl.Map({container:"gl", style:glStyle(area), interactive:false, fadeDuration:0, attributionControl:{compact:true}});
+    GL.map=new maplibregl.Map({container:"gl", style:glStyle(area), dragRotate:false, pitchWithRotate:false, fadeDuration:0, attributionControl:{compact:true}});
     GL.map.addControl(new maplibregl.ScaleControl({maxWidth:110, unit:"metric"}), "bottom-left");
+    GL.map.touchZoomRotate.disableRotation(); GL.map.touchPitch.disable();
     GL.map.on("load", function(){ GL.loaded=true; });
+    GL.map.on("movestart", function(e){ if(e.originalEvent){ GL.follow=false; $("recenter").classList.add("on"); } });
+    GL.map.on("zoom", glAcc);
     GL.map.on("error", function(){ if(!GL.loaded){ GL.dead=true; glOff(); draw(); } });
     var el=document.createElement("div");
     el.innerHTML='<svg width="48" height="48" viewBox="-24 -24 48 48" aria-hidden="true"><path d="M0 -22 L8 -8 L-8 -8 Z" fill="#f08a00"/></svg>';
@@ -651,12 +663,9 @@ function glRender(all){
   var k=Math.cos(ref.lat*rad), halfLon=60/(111320*k), halfLat=60/110540;
   if(e-w<2*halfLon){ var cx=(w+e)/2; w=cx-halfLon; e=cx+halfLon; }
   if(n-s<2*halfLat){ var cy=(s+n)/2; s=cy-halfLat; n=cy+halfLat; }
-  m.fitBounds([[w,s],[e,n]], {padding:34, maxZoom:17, duration:0});
+  if(GL.follow) m.fitBounds([[w,s],[e,n]], {padding:34, maxZoom:17, duration:0});
 
-  if(S.cur && m.getLayer("tb-acc")){
-    var mpp=78271.517*Math.cos(S.cur.lat*rad)/Math.pow(2,m.getZoom());
-    m.setPaintProperty("tb-acc","circle-radius",Math.max(8,Math.min(90,S.cur.acc/mpp)));
-  }
+  glAcc();
   var hd=(S.compass!=null?S.compass:S.gpsHead);
   if(S.cur && hd!=null){ GL.arrow.setLngLat([S.cur.lon,S.cur.lat]).setRotation(hd); if(!GL.arrow._map) GL.arrow.addTo(m); }
   else if(GL.arrow._map) GL.arrow.remove();
