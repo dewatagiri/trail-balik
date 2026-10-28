@@ -174,6 +174,12 @@ input[type=file]{display:none}
     <button id="clearTrail">Clear loaded trail</button>
   </div>
 
+  <h2>Offline maps</h2>
+  <p>Download your area at home on Wi-Fi. The map will then work on the trail with no signal.</p>
+  <div id="mapList"></div>
+  <p id="offApp"></p>
+  <p>iPhone: add Trail Balik to your home screen. Otherwise Safari may delete saved maps if you don’t open the app for 7 days.</p>
+
   <h2>Saved tracks</h2>
   <div id="list"></div>
 
@@ -445,7 +451,7 @@ function renderList(){
 }
 
 /* ---------- sheet + a2hs ---------- */
-function openSheet(){ renderList(); $("scrim").style.display="block"; $("sheet").classList.add("open"); }
+function openSheet(){ renderList(); renderMaps(); $("scrim").style.display="block"; $("sheet").classList.add("open"); }
 function closeSheet(){ $("scrim").style.display="none"; $("sheet").classList.remove("open"); }
 $("more").addEventListener("click", openSheet);
 $("close").addEventListener("click", closeSheet);
@@ -586,9 +592,9 @@ function render(){
 }
 /* ---------- offline basemap (PMTiles, falls back to the plain canvas above) ---------- */
 var AREAS=[
-  {id:"selangor-kl",     bb:[100.75,2.55,101.95,3.95]},
-  {id:"negeri-sembilan", bb:[101.65,2.35,102.65,3.25]},
-  {id:"pahang-west",     bb:[101.30,2.90,102.90,4.45]}
+  {id:"selangor-kl",     name:"Selangor & KL",   mb:28.2, bb:[100.75,2.55,101.95,3.95]},
+  {id:"negeri-sembilan", name:"Negeri Sembilan", mb:16.9, bb:[101.65,2.35,102.65,3.25]},
+  {id:"pahang-west",     name:"Pahang (west)",   mb:30.0, bb:[101.30,2.90,102.90,4.45]}
 ];
 var BASE=location.href.replace(/[?#].*$/,"").replace(/[^\/]*$/,"");
 var GL={follow:true, map:null, area:null, dead:false, loaded:false, proto:false, me:null, arrow:null};
@@ -741,6 +747,80 @@ $("tDon").addEventListener("click", function(){ tab("d"); });
 $("tLed").addEventListener("click", function(){ tab("l"); });
 $("supportBtn").addEventListener("click", function(){ closeSheet(); renderOpts(); renderLedger(); tab("d"); $("pg").classList.add("on"); });
 $("pgClose").addEventListener("click", function(){ $("pg").classList.remove("on"); });
+
+/* ---------- offline: service worker + saved maps ---------- */
+var MAPS="tb-maps", DL=null;
+function mapUrl(a){ return BASE+"maps/"+a.id+".pmtiles"; }
+function swTell(){ try{ if(navigator.serviceWorker&&navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage({type:"maps-changed"}); }catch(e){} }
+function offAppTxt(){
+  var on=!!(navigator.serviceWorker&&navigator.serviceWorker.controller);
+  $("offApp").textContent=on ? "The app itself is saved on this phone and opens without signal." : "Open Trail Balik once with signal so the app can save itself for offline use.";
+}
+function renderMaps(){
+  offAppTxt();
+  var box=$("mapList");
+  if(!("caches" in window)){ box.innerHTML="<p>This browser can’t save maps for offline use.</p>"; return; }
+  var here=S.cur?areaFor(S.cur):null;
+  caches.open(MAPS).then(function(c){
+    return Promise.all(AREAS.map(function(a){ return c.match(mapUrl(a)).then(function(r){ return !!r; }); }));
+  }).then(function(have){
+    box.innerHTML=AREAS.map(function(a,i){
+      var busy=DL&&DL.id===a.id, st;
+      if(busy) st="Downloading "+(DL.got/1e6).toFixed(1)+" of "+a.mb.toFixed(1)+" MB";
+      else st=(have[i]?"Saved, works offline":"Not saved")+" · "+a.mb.toFixed(1)+" MB";
+      if(here===a) st+=" · you are here";
+      var btn=busy?"Cancel":(have[i]?"Delete":"Download");
+      return '<div class="trk"><div>'+esc(a.name)+'<small id="mp-'+a.id+'">'+st+'</small></div>'+
+             '<button data-map="'+a.id+'" data-act="'+btn+'"'+(DL&&!busy&&!have[i]?" disabled":"")+'>'+btn+'</button></div>';
+    }).join("");
+  }).catch(function(){ box.innerHTML="<p>Couldn’t read saved maps.</p>"; });
+}
+function dlMap(a){
+  if(DL) return;
+  DL={id:a.id, got:0, ctl:new AbortController()};
+  try{ if(navigator.storage&&navigator.storage.persist) navigator.storage.persist(); }catch(e){}
+  renderMaps();
+  var est=(navigator.storage&&navigator.storage.estimate) ? navigator.storage.estimate() : Promise.resolve(null);
+  est.then(function(q){
+    if(q&&q.quota&&q.quota-q.usage<a.mb*1.1e6) throw new Error("space");
+    return fetch(mapUrl(a), {signal:DL.ctl.signal, cache:"no-store"});
+  }).then(function(r){
+    if(!r.ok||!r.body) throw new Error("http");
+    var rd=r.body.getReader(), parts=[];
+    function pump(){
+      return rd.read().then(function(x){
+        if(x.done) return new Blob(parts);
+        parts.push(x.value); DL.got+=x.value.length;
+        var el=$("mp-"+a.id); if(el) el.textContent="Downloading "+(DL.got/1e6).toFixed(1)+" of "+a.mb.toFixed(1)+" MB";
+        return pump();
+      });
+    }
+    return pump();
+  }).then(function(blob){
+    return caches.open(MAPS).then(function(c){
+      return c.put(mapUrl(a), new Response(blob, {headers:{"Content-Type":"application/octet-stream","Content-Length":String(blob.size)}}));
+    });
+  }).then(function(){
+    DL=null; swTell(); toast(a.name+" map saved. It will work offline."); renderMaps();
+  }).catch(function(e){
+    var why=DL&&DL.ctl.signal.aborted ? "Download cancelled." : (e&&e.message==="space") ? "Not enough space on this phone." : "Download failed. Check your connection and try again.";
+    DL=null; toast(why); renderMaps();
+  });
+}
+function delMap(a){
+  caches.open(MAPS).then(function(c){ return c.delete(mapUrl(a)); }).then(function(){ swTell(); toast(a.name+" map deleted."); renderMaps(); });
+}
+$("mapList").addEventListener("click", function(e){
+  var b=e.target.closest("button[data-map]"); if(!b) return;
+  var a=AREAS.filter(function(x){ return x.id===b.getAttribute("data-map"); })[0], act=b.getAttribute("data-act");
+  if(act==="Download") dlMap(a);
+  else if(act==="Cancel"&&DL) DL.ctl.abort();
+  else if(act==="Delete"&&confirm("Delete the saved "+a.name+" map? You’ll need signal to see it again.")) delMap(a);
+});
+if("serviceWorker" in navigator && location.protocol!=="file:"){
+  navigator.serviceWorker.register("sw.js").catch(function(){});
+  navigator.serviceWorker.addEventListener("controllerchange", offAppTxt);
+}
 
 /* ---------- go ---------- */
 recoverDraft();
